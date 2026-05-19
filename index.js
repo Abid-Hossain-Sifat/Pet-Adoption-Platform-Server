@@ -44,6 +44,17 @@ const run = async () => {
             res.send (result)
         })
 
+        app.post ('/pets', async (req, res) => {
+            try {
+                const petData = req.body;
+                const result = await collection.insertOne(petData);
+                res.status(201).send(result);
+            } catch (error) {
+                console.error("Error inserting pet:", error);
+                res.status(500).send({ message: "Failed to add pet", error });
+            }
+        })
+
 
         await client.db('admin').command ({ ping: 1 })
         console.log ('ping deploy successfully')
