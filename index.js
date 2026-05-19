@@ -4,10 +4,17 @@ const express = require('express');
 const app = express();
 const cors = require('cors');
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const { auth } = require("./auth.js");
+const { toNodeHandler } = require("better-auth/node");
 
 
 
-app.use(cors());
+app.use(cors({
+    origin: "http://localhost:3000",
+    credentials: true
+}));
+
+app.all("/api/auth/*splat", toNodeHandler(auth));
 app.use(express.json());
 
 const port = process.env.PORT;
