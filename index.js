@@ -180,6 +180,18 @@ const run = async () => {
             }
         })
 
+        app.delete ('/adoption-requests/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const query = { _id: new ObjectId(id) };
+                const result = await requestsCollection.deleteOne(query);
+                res.send(result);
+            } catch (error) {
+                console.error("Error deleting request:", error);
+                res.status(500).send({ message: "Failed to delete request", error });
+            }
+        })
+
 
         await client.db('admin').command ({ ping: 1 })
         console.log ('ping deploy successfully')
