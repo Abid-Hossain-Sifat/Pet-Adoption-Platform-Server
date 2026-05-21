@@ -1,25 +1,23 @@
-require ('dotenv').config();
+require('dotenv').config();
 
 const express = require('express');
 const app = express();
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const { auth } = require("./auth.js");
-const { toNodeHandler } = require("better-auth/node");
-
-
 
 app.use(cors({
     origin: "http://localhost:3000",
     credentials: true
 }));
 
-app.all("/api/auth/*splat", toNodeHandler(auth));
 app.use(express.json());
+app.use(cookieParser());
 
-const port = process.env.PORT;
+const port = process.env.PORT || 2006;
 const uri = process.env.MongoDB_URI;
-
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -29,43 +27,238 @@ const client = new MongoClient(uri, {
   }
 });
 
-
 const run = async () => {
     try {
         await client.connect();
 
-        const Data = client.db('Pets')
-        const collection = Data.collection('all_pets')
-        const requestsCollection = Data.collection('adoption_requests')
+        const Data = client.db('Pets');
+        const collection = Data.collection('all_pets');
+        const requestsCollection = Data.collection('adoption_requests');
+        const usersCollection = Data.collection('user'); 
+
+        // --- CUSTOM JWT AUTHENTICATION MIDDLEWARE ---
+        const verifyToken = (req, res, next) => {
+            const token = req.cookies.token;
+            if (!token) {
+                return res.status(401).send({ message: "Unauthorized access. Please login first." });
+            }
+            try {
+                const jwtSecret = process.env.JWT_SECRET || 'pet_adoption_platform_secret_2026_xyz';
+                const decoded = jwt.verify(token, jwtSecret);
+                req.user = decoded;
+                next();
+            } catch (error) {
+                console.error("JWT verification failed:", error);
+                return res.status(401).send({ message: "Unauthorized access. Invalid or expired token." });
+            }
+        };
+
+        // --- JWT AUTHENTICATION ENDPOINTS ---
+
+        app.post('/auth/register', async (req, res) => {
+            try {
+                const { email, password, name, image } = req.body;
+                if (!email || !password || !name) {
+                    return res.status(400).send({ message: "Name, email, and password are required." });
+                }
+                if (password.length < 6) {
+                    return res.status(400).send({ message: "Password must be at least 6 characters long." });
+                }
+
+                const existingUser = await usersCollection.findOne({ email });
+                if (existingUser) {
+                    return res.status(400).send({ message: "An account with this email already exists." });
+                }
+
+                const hashedPassword = await bcrypt.hash(password, 10);
+                const newUser = {
+                    name,
+                    email,
+                    password: hashedPassword,
+                    image: image || "",
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                };
+
+                const insertResult = await usersCollection.insertOne(newUser);
+                const userId = insertResult.insertedId;
+
+                const jwtSecret = process.env.JWT_SECRET || 'pet_adoption_platform_secret_2026_xyz';
+                const token = jwt.sign(
+                    { id: userId.toString(), email: newUser.email, name: newUser.name },
+                    jwtSecret,
+                    { expiresIn: '7d' }
+                );
+
+                res.cookie('token', token, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'lax',
+                    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                });
+
+                res.status(201).send({
+                    user: {
+                        id: userId,
+                        name: newUser.name,
+                        email: newUser.email,
+                        image: newUser.image
+                    }
+                });
+            } catch (error) {
+                console.error("Error registering user:", error);
+                res.status(500).send({ message: "Failed to register user", error: error.message });
+            }
+        });
+
+        app.post('/auth/login', async (req, res) => {
+            try {
+                const { email, password } = req.body;
+                if (!email || !password) {
+                    return res.status(400).send({ message: "Email and password are required." });
+                }
+
+                const user = await usersCollection.findOne({ email });
+                if (!user) {
+                    return res.status(400).send({ message: "Invalid email or password." });
+                }
+
+                if (!user.password) {
+                    return res.status(400).send({ message: "This account uses social authentication. Please use social login." });
+                }
+
+                const isPasswordValid = await bcrypt.compare(password, user.password);
+                if (!isPasswordValid) {
+                    return res.status(400).send({ message: "Invalid email or password." });
+                }
+
+                const jwtSecret = process.env.JWT_SECRET || 'pet_adoption_platform_secret_2026_xyz';
+                const token = jwt.sign(
+                    { id: user._id.toString(), email: user.email, name: user.name },
+                    jwtSecret,
+                    { expiresIn: '7d' }
+                );
+
+                res.cookie('token', token, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'lax',
+                    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                });
+
+                res.send({
+                    user: {
+                        id: user._id,
+                        name: user.name,
+                        email: user.email,
+                        image: user.image
+                    }
+                });
+            } catch (error) {
+                console.error("Error logging in:", error);
+                res.status(500).send({ message: "Failed to login", error: error.message });
+            }
+        });
+
+        app.post('/auth/logout', async (req, res) => {
+            res.clearCookie('token', {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax'
+            });
+            res.send({ success: true, message: "Logged out successfully." });
+        });
+
+        app.get('/auth/me', async (req, res) => {
+            try {
+                const token = req.cookies.token;
+                if (!token) {
+                    return res.status(401).send({ message: "No active session." });
+                }
+
+                const jwtSecret = process.env.JWT_SECRET || 'pet_adoption_platform_secret_2026_xyz';
+                const decoded = jwt.verify(token, jwtSecret);
+
+                const user = await usersCollection.findOne({ _id: new ObjectId(decoded.id) });
+                if (!user) {
+                    return res.status(401).send({ message: "Session user not found." });
+                }
+
+                res.send({
+                    user: {
+                        id: user._id,
+                        name: user.name,
+                        email: user.email,
+                        image: user.image
+                    }
+                });
+            } catch (error) {
+                console.error("Session verification error:", error);
+                res.status(401).send({ message: "Invalid or expired session token." });
+            }
+        });
+
+
 
         app.get ('/pets', async (req, res) => {
             try {
-                const email = req.query.email;
+                const { email, search, species, sortBy, sortOrder } = req.query;
                 let query = {};
+
                 if (email) {
-                    query = { email: email };
+                    query.email = email;
                 }
-                const cursor = collection.find(query)
-                const result = await cursor.toArray()
-                res.send (result)
+
+                if (search) {
+                    query.name = { $regex: search, $options: 'i' };
+                }
+
+                if (species) {
+                    const speciesList = species.split(',').map(s => s.trim()).filter(Boolean);
+                    if (speciesList.length > 0) {
+                        query.species = { 
+                            $in: speciesList.map(s => new RegExp(`^${s}$`, 'i'))
+                        };
+                    }
+                }
+
+                let sortDoc = {};
+                if (sortBy) {
+                    const order = sortOrder === 'desc' ? -1 : 1;
+                    if (sortBy === 'adoptionFee') {
+                        sortDoc.adoptionFee = order;
+                    } else if (sortBy === 'age') {
+                        sortDoc.age = order;
+                    } else if (sortBy === 'name') {
+                        sortDoc.name = order;
+                    } else {
+                        sortDoc[sortBy] = order;
+                    }
+                } else {
+                    sortDoc._id = -1;
+                }
+
+                const cursor = collection.find(query).sort(sortDoc);
+                const result = await cursor.toArray();
+                res.send (result);
             } catch (error) {
                 console.error("Error fetching pets:", error);
-                res.status(500).send({ message: "Failed to fetch pets", error });
+                res.status(500).send({ message: "Failed to fetch pets", error: error.message });
             }
-        })
+        });
 
-        app.post ('/pets', async (req, res) => {
+        app.post ('/pets', verifyToken, async (req, res) => {
             try {
                 const petData = req.body;
                 const result = await collection.insertOne(petData);
                 res.status(201).send(result);
             } catch (error) {
                 console.error("Error inserting pet:", error);
-                res.status(500).send({ message: "Failed to add pet", error });
+                res.status(500).send({ message: "Failed to add pet", error: error.message });
             }
-        })
+        });
 
-        app.delete ('/pets/:id', async (req, res) => {
+        app.delete ('/pets/:id', verifyToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
@@ -73,11 +266,11 @@ const run = async () => {
                 res.send(result);
             } catch (error) {
                 console.error("Error deleting pet:", error);
-                res.status(500).send({ message: "Failed to delete pet", error });
+                res.status(500).send({ message: "Failed to delete pet", error: error.message });
             }
-        })
+        });
 
-        app.put ('/pets/:id', async (req, res) => {
+        app.put ('/pets/:id', verifyToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const petData = req.body;
@@ -90,13 +283,13 @@ const run = async () => {
                 res.send(result);
             } catch (error) {
                 console.error("Error updating pet:", error);
-                res.status(500).send({ message: "Failed to update pet", error });
+                res.status(500).send({ message: "Failed to update pet", error: error.message });
             }
-        })
+        });
 
-        // --- ADOPTION REQUESTS ENDPOINTS ---
 
-        app.post ('/adoption-requests', async (req, res) => {
+
+        app.post ('/adoption-requests', verifyToken, async (req, res) => {
             try {
                 const requestData = req.body;
                 const existing = await requestsCollection.findOne({
@@ -110,11 +303,11 @@ const run = async () => {
                 res.status(201).send(result);
             } catch (error) {
                 console.error("Error creating adoption request:", error);
-                res.status(500).send({ message: "Failed to submit request", error });
+                res.status(500).send({ message: "Failed to submit request", error: error.message });
             }
-        })
+        });
 
-        app.get ('/adoption-requests', async (req, res) => {
+        app.get ('/adoption-requests', verifyToken, async (req, res) => {
             try {
                 const { petId, requesterEmail } = req.query;
                 let query = {};
@@ -128,11 +321,11 @@ const run = async () => {
                 res.send(result);
             } catch (error) {
                 console.error("Error fetching adoption requests:", error);
-                res.status(500).send({ message: "Failed to fetch requests", error });
+                res.status(500).send({ message: "Failed to fetch requests", error: error.message });
             }
-        })
+        });
 
-        app.put ('/adoption-requests/:id/approve', async (req, res) => {
+        app.put ('/adoption-requests/:id/approve', verifyToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const request = await requestsCollection.findOne({ _id: new ObjectId(id) });
@@ -141,19 +334,16 @@ const run = async () => {
                 }
                 const petId = request.petId;
 
-                // 1. Approve this request
                 await requestsCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { status: 'approved' } }
                 );
 
-                // 2. Reject all other requests for this pet
                 await requestsCollection.updateMany(
                     { petId: petId, _id: { $ne: new ObjectId(id) } },
                     { $set: { status: 'rejected' } }
                 );
 
-                // 3. Update the pet's status to 'Adopted'
                 await collection.updateOne(
                     { _id: new ObjectId(petId) },
                     { $set: { status: 'Adopted' } }
@@ -162,11 +352,11 @@ const run = async () => {
                 res.send({ message: "Request approved and others rejected successfully!" });
             } catch (error) {
                 console.error("Error approving request:", error);
-                res.status(500).send({ message: "Failed to approve request", error });
+                res.status(500).send({ message: "Failed to approve request", error: error.message });
             }
-        })
+        });
 
-        app.put ('/adoption-requests/:id/reject', async (req, res) => {
+        app.put ('/adoption-requests/:id/reject', verifyToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const result = await requestsCollection.updateOne(
@@ -176,11 +366,11 @@ const run = async () => {
                 res.send(result);
             } catch (error) {
                 console.error("Error rejecting request:", error);
-                res.status(500).send({ message: "Failed to reject request", error });
+                res.status(500).send({ message: "Failed to reject request", error: error.message });
             }
-        })
+        });
 
-        app.delete ('/adoption-requests/:id', async (req, res) => {
+        app.delete ('/adoption-requests/:id', verifyToken, async (req, res) => {
             try {
                 const id = req.params.id;
                 const query = { _id: new ObjectId(id) };
@@ -188,30 +378,23 @@ const run = async () => {
                 res.send(result);
             } catch (error) {
                 console.error("Error deleting request:", error);
-                res.status(500).send({ message: "Failed to delete request", error });
+                res.status(500).send({ message: "Failed to delete request", error: error.message });
             }
-        })
+        });
 
-
-        await client.db('admin').command ({ ping: 1 })
-        console.log ('ping deploy successfully')
+        await client.db('admin').command ({ ping: 1 });
+        console.log ('MongoDB database connection pinged successfully!');
     }
     catch (error) {
-        console.log (error)
-    }
-    finally {
-
+        console.error("MongoDB initialization error:", error);
     }
 }
-run().catch(console.dir)
-
-
+run().catch(console.dir);
 
 app.get ('/', (req, res) =>{
     res.send ('Pet Adoption Platform Project server live Now')
-})
+});
 
-
-app.listen (port, (req, res) =>{
+app.listen (port, () =>{
     console.log (`Pet Adoption Platform Project server live on port ${port}`)
-})
+});
