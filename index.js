@@ -29,14 +29,25 @@ const client = new MongoClient(uri, {
   }
 });
 
+let collection;
+let requestsCollection;
+let usersCollection;
+
+const getCollections = () => {
+    if (!collection || !requestsCollection || !usersCollection) {
+        throw new Error('Database not initialized');
+    }
+    return { collection, requestsCollection, usersCollection };
+};
+
 const run = async () => {
     try {
         await client.connect();
 
         const Data = client.db('Pets');
-        const collection = Data.collection('all_pets');
-        const requestsCollection = Data.collection('adoption_requests');
-        const usersCollection = Data.collection('user'); 
+        collection = Data.collection('all_pets');
+        requestsCollection = Data.collection('adoption_requests');
+        usersCollection = Data.collection('user');
 
         // --- CUSTOM JWT AUTHENTICATION MIDDLEWARE ---
         const verifyToken = (req, res, next) => {
@@ -502,6 +513,57 @@ const run = async () => {
         console.error("MongoDB initialization error:", error);
     }
 }
+app.get('/pets', async (req, res) => {
+    try {
+        if (!collection) {
+            return res.status(503).send({ message: 'Database connection not ready yet' });
+        }
+
+        const { email, search, species, sortBy, sortOrder } = req.query;
+        let query = {};
+
+        if (email) {
+            query.email = email;
+        }
+
+        if (search) {
+            query.name = { $regex: search, $options: 'i' };
+        }
+
+        if (species) {
+            const speciesList = species.split(',').map(s => s.trim()).filter(Boolean);
+            if (speciesList.length > 0) {
+                query.species = {
+                    $in: speciesList.map(s => new RegExp(`^${s}$`, 'i'))
+                };
+            }
+        }
+
+        let sortDoc = {};
+        if (sortBy) {
+            const order = sortOrder === 'desc' ? -1 : 1;
+            if (sortBy === 'adoptionFee') {
+                sortDoc.adoptionFee = order;
+            } else if (sortBy === 'age') {
+                sortDoc.age = order;
+            } else if (sortBy === 'name') {
+                sortDoc.name = order;
+            } else {
+                sortDoc[sortBy] = order;
+            }
+        } else {
+            sortDoc._id = -1;
+        }
+
+        const cursor = collection.find(query).sort(sortDoc);
+        const result = await cursor.toArray();
+        res.send(result);
+    } catch (error) {
+        console.error('Error fetching pets:', error);
+        res.status(500).send({ message: 'Failed to fetch pets', error: error.message });
+    }
+});
+
 run().catch(console.dir);
 
 app.get ('/', (req, res) =>{
