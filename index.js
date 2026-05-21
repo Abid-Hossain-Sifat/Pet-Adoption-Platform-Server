@@ -8,8 +8,10 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
+const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+
 app.use(cors({
-    origin: "http://localhost:3000",
+    origin: clientUrl,
     credentials: true
 }));
 
@@ -198,7 +200,118 @@ const run = async () => {
             }
         });
 
+        app.get('/auth/social/google', async (req, res) => {
+            try {
+                const callbackURL = Array.isArray(req.query.callbackURL) ? req.query.callbackURL[0] : req.query.callbackURL;
+                const serverBaseUrl = process.env.BETTER_AUTH_URL || `http://localhost:${port}`;
+                const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
+                const state = callbackURL ? encodeURIComponent(callbackURL) : encodeURIComponent(`${clientUrl}/`);
 
+                const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+                authUrl.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID);
+                authUrl.searchParams.set('redirect_uri', redirectUri);
+                authUrl.searchParams.set('response_type', 'code');
+                authUrl.searchParams.set('scope', 'openid email profile');
+                authUrl.searchParams.set('access_type', 'offline');
+                authUrl.searchParams.set('prompt', 'select_account');
+                authUrl.searchParams.set('state', state);
+
+                return res.redirect(authUrl.toString());
+            } catch (error) {
+                console.error('Google social login redirect failed:', error);
+                return res.status(500).send({ message: 'Google login failed. Please try again later.' });
+            }
+        });
+
+        app.get('/auth/social/google/callback', async (req, res) => {
+            try {
+                const code = Array.isArray(req.query.code) ? req.query.code[0] : req.query.code;
+                const state = Array.isArray(req.query.state) ? req.query.state[0] : req.query.state;
+
+                if (!code) {
+                    return res.status(400).send({ message: 'Google authentication failed. No code returned.' });
+                }
+
+                const serverBaseUrl = process.env.BETTER_AUTH_URL || `http://localhost:${port}`;
+                const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
+
+                const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        client_id: process.env.GOOGLE_CLIENT_ID,
+                        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+                        code,
+                        grant_type: 'authorization_code',
+                        redirect_uri: redirectUri,
+                    }).toString(),
+                });
+
+                const tokenData = await tokenResponse.json();
+                if (!tokenResponse.ok || !tokenData.access_token) {
+                    console.error('Google token exchange failed:', tokenData);
+                    return res.status(500).send({ message: 'Google token exchange failed.' });
+                }
+
+                const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: {
+                        Authorization: `Bearer ${tokenData.access_token}`,
+                    },
+                });
+
+                const profileData = await profileResponse.json();
+                if (!profileData.email) {
+                    return res.status(400).send({ message: 'Google did not return an email address.' });
+                }
+
+                const now = new Date();
+                let user = await usersCollection.findOne({ email: profileData.email });
+                if (!user) {
+                    const newUser = {
+                        name: profileData.name || profileData.email.split('@')[0],
+                        email: profileData.email,
+                        image: profileData.picture || '',
+                        password: null,
+                        provider: 'google',
+                        createdAt: now,
+                        updatedAt: now,
+                    };
+                    const insertResult = await usersCollection.insertOne(newUser);
+                    user = { ...newUser, _id: insertResult.insertedId };
+                } else {
+                    const updates = {};
+                    if (!user.name && profileData.name) updates.name = profileData.name;
+                    if (!user.image && profileData.picture) updates.image = profileData.picture;
+                    if (Object.keys(updates).length > 0) {
+                        updates.updatedAt = now;
+                        await usersCollection.updateOne({ _id: user._id }, { $set: updates });
+                        user = await usersCollection.findOne({ _id: user._id });
+                    }
+                }
+
+                const jwtSecret = process.env.JWT_SECRET || 'pet_adoption_platform_secret_2026_xyz';
+                const token = jwt.sign(
+                    { id: user._id.toString(), email: user.email, name: user.name },
+                    jwtSecret,
+                    { expiresIn: '7d' }
+                );
+
+                res.cookie('token', token, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'lax',
+                    maxAge: 7 * 24 * 60 * 60 * 1000,
+                });
+
+                const redirectTo = state ? decodeURIComponent(state) : `${clientUrl}/`;
+                return res.redirect(redirectTo);
+            } catch (error) {
+                console.error('Google social login callback failed:', error);
+                return res.status(500).send({ message: 'Google authentication callback failed.' });
+            }
+        });
 
         app.get ('/pets', async (req, res) => {
             try {
@@ -395,7 +508,6 @@ app.get ('/', (req, res) =>{
     res.send ('Pet Adoption Platform Project server live Now')
 });
 
-// app.listen (port, () =>{
-//     console.log (`Pet Adoption Platform Project server live on port ${port}`)
-// });
-module.exports = app;
+app.listen (port, () =>{
+    console.log (`Pet Adoption Platform Project server live on port ${port}`)
+});
