@@ -508,6 +508,10 @@ app.get ('/', (req, res) =>{
     res.send ('Pet Adoption Platform Project server live Now')
 });
 
-app.listen (port, () =>{
-    console.log (`Pet Adoption Platform Project server live on port ${port}`)
-});
+module.exports = app;
+
+if (process.env.NODE_ENV !== 'production') {
+    app.listen (port, () =>{
+        console.log (`Pet Adoption Platform Project server live on port ${port}`)
+    });
+}
