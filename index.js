@@ -29,27 +29,29 @@ const client = new MongoClient(uri, {
   }
 });
 
-
 let collection, requestsCollection, usersCollection;
 
-
-const connectDB = async () => {
+const ensureDBConnection = async (req, res, next) => {
     try {
+        if (collection && requestsCollection && usersCollection) {
+            return next();
+        }
         
         await client.connect();
-        
         const Data = client.db('Pets');
         collection = Data.collection('all_pets');
         requestsCollection = Data.collection('adoption_requests');
         usersCollection = Data.collection('user'); 
-
+        
         console.log('MongoDB database connection established successfully!');
+        next();
     } catch (error) {
-        console.error("MongoDB initialization error:", error);
+        console.error("MongoDB initialization error in middleware:", error);
+        res.status(500).send({ message: "Database connection failed", error: error.message });
     }
 };
 
-connectDB();
+app.use(ensureDBConnection);
 
 // --- CUSTOM JWT AUTHENTICATION MIDDLEWARE ---
 const verifyToken = (req, res, next) => {
@@ -68,7 +70,7 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-
+// --- BASE ROUTE ---
 app.get('/', (req, res) => {
     res.send('Pet Adoption Platform Project server live Now');
 });
@@ -112,8 +114,8 @@ app.post('/auth/register', async (req, res) => {
 
         res.cookie('token', token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            secure: true,
+            sameSite: 'none',
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
@@ -161,8 +163,8 @@ app.post('/auth/login', async (req, res) => {
 
         res.cookie('token', token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            secure: true,
+            sameSite: 'none',
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
@@ -183,8 +185,8 @@ app.post('/auth/login', async (req, res) => {
 app.post('/auth/logout', async (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+        secure: true,
+        sameSite: 'none'
     });
     res.send({ success: true, message: "Logged out successfully." });
 });
@@ -221,7 +223,7 @@ app.get('/auth/me', async (req, res) => {
 app.get('/auth/social/google', async (req, res) => {
     try {
         const callbackURL = Array.isArray(req.query.callbackURL) ? req.query.callbackURL[0] : req.query.callbackURL;
-        const serverBaseUrl = process.env.BETTER_AUTH_URL || `http://localhost:${port}`;
+        const serverBaseUrl = process.env.BETTER_AUTH_URL || `https://${req.headers.host}`;
         const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
         const state = callbackURL ? encodeURIComponent(callbackURL) : encodeURIComponent(`${clientUrl}/`);
 
@@ -250,7 +252,7 @@ app.get('/auth/social/google/callback', async (req, res) => {
             return res.status(400).send({ message: 'Google authentication failed. No code returned.' });
         }
 
-        const serverBaseUrl = process.env.BETTER_AUTH_URL || `http://localhost:${port}`;
+        const serverBaseUrl = process.env.BETTER_AUTH_URL || `https://${req.headers.host}`;
         const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
 
         const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -318,8 +320,8 @@ app.get('/auth/social/google/callback', async (req, res) => {
 
         res.cookie('token', token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+            secure: true,
+            sameSite: 'none',
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
@@ -335,8 +337,6 @@ app.get('/auth/social/google/callback', async (req, res) => {
 
 app.get('/pets', async (req, res) => {
     try {
-        if (!collection) return res.status(503).send({ message: "Database connecting, try again in a moment." });
-
         const { email, search, species, sortBy, sortOrder } = req.query;
         let query = {};
 
@@ -413,7 +413,7 @@ app.put('/pets/:id', verifyToken, async (req, res) => {
         const query = { _id: new ObjectId(id) };
         const updateDoc = {
             $set: updateData,
-        };
+            };
         const result = await collection.updateOne(query, updateDoc);
         res.send(result);
     } catch (error) {
@@ -517,11 +517,5 @@ app.delete('/adoption-requests/:id', verifyToken, async (req, res) => {
     }
 });
 
-// --- LOCAL SERVER LISTEN ---
-if (process.env.NODE_ENV !== 'production') {
-    app.listen(port, () => {
-        console.log(`Pet Adoption Platform Project server live on port ${port}`);
-    });
-}
 
 module.exports = app;
