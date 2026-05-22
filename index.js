@@ -50,6 +50,21 @@ app.use(cors({
     credentials: true
 }));
 
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+
+const getCookieOptions = (maxAge) => {
+    const opts = {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax'
+    };
+    if (maxAge !== undefined) {
+        opts.maxAge = maxAge;
+    }
+    return opts;
+};
+
+
 
 app.use(express.json());
 app.use(cookieParser());
@@ -148,12 +163,7 @@ app.post('/auth/register', async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000 
-        });
+        res.cookie('token', token, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
         res.status(201).send({
             user: {
@@ -197,12 +207,7 @@ app.post('/auth/login', async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000 
-        });
+        res.cookie('token', token, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
         res.send({
             user: {
@@ -219,11 +224,7 @@ app.post('/auth/login', async (req, res) => {
 });
 
 app.post('/auth/logout', async (req, res) => {
-    res.clearCookie('token', {
-        httpOnly: true,
-        secure: true,
-        sameSite: 'none'
-    });
+    res.clearCookie('token', getCookieOptions());
     res.send({ success: true, message: "Logged out successfully." });
 });
 
@@ -354,12 +355,7 @@ app.get('/auth/social/google/callback', async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        res.cookie('token', token, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
         const redirectTo = state ? decodeURIComponent(state) : `${clientUrl}/`;
         return res.redirect(redirectTo);
