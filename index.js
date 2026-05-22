@@ -56,7 +56,8 @@ const getCookieOptions = (maxAge) => {
     const opts = {
         httpOnly: true,
         secure: true,
-        sameSite: 'none'
+        sameSite: 'none',
+         domain: undefined
     };
     if (maxAge !== undefined) {
         opts.maxAge = maxAge;
