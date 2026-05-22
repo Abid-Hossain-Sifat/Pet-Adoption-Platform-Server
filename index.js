@@ -10,10 +10,46 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
 
+// Normalize client URL to ensure it has https:// or http://
+let normalizedClientUrl = clientUrl;
+if (clientUrl && !/^https?:\/\//i.test(clientUrl)) {
+    normalizedClientUrl = `https://${clientUrl}`;
+}
+
+const allowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    normalizedClientUrl
+];
+
 app.use(cors({
-    origin: clientUrl,
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps, curl, postman)
+        if (!origin) return callback(null, true);
+        
+        const isLocalhost = /^http:\/\/localhost:\d+$/.test(origin);
+        
+        let isVercel = false;
+        try {
+            const hostname = new URL(origin).hostname;
+            isVercel = /\.vercel\.app$/i.test(hostname) || hostname === 'vercel.app';
+        } catch (e) {
+            // Invalid URL format in origin
+        }
+        
+        const isAllowed = allowedOrigins.includes(origin);
+        
+        if (isLocalhost || isVercel || isAllowed) {
+            callback(null, true);
+        } else {
+            console.warn(`Blocked by CORS: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true
 }));
+
 
 app.use(express.json());
 app.use(cookieParser());
@@ -517,5 +553,11 @@ app.delete('/adoption-requests/:id', verifyToken, async (req, res) => {
     }
 });
 
+
+if (!process.env.VERCEL) {
+    app.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+    });
+}
 
 module.exports = app;
