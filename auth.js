@@ -2,7 +2,8 @@ app.get('/auth/social/google', async (req, res) => {
     try {
         const callbackURL = req.query.callbackURL;
         
-        const serverBaseUrl = "https://a9-pet-adoption-platform-server.vercel.app";
+        const serverBaseUrl = process.env.SERVER_URL || "http://localhost:2006";
+        
         const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
         
         const state = callbackURL ? encodeURIComponent(callbackURL) : encodeURIComponent(clientUrl);
@@ -32,7 +33,7 @@ app.get('/auth/social/google/callback', async (req, res) => {
             return res.status(400).send({ message: 'Google authentication failed. No code returned.' });
         }
 
-        const serverBaseUrl = "https://a9-pet-adoption-platform-server.vercel.app";
+        const serverBaseUrl = process.env.SERVER_URL || "http://localhost:2006";
         const redirectUri = `${serverBaseUrl}/auth/social/google/callback`;
 
         const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
