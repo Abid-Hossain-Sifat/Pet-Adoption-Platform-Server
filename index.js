@@ -55,8 +55,8 @@ const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL
 const getCookieOptions = (maxAge) => {
     const opts = {
         httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax'
+        secure: true,
+        sameSite: 'none'
     };
     if (maxAge !== undefined) {
         opts.maxAge = maxAge;
@@ -224,7 +224,11 @@ app.post('/auth/login', async (req, res) => {
 });
 
 app.post('/auth/logout', async (req, res) => {
-    res.clearCookie('token', getCookieOptions());
+    res.clearCookie('token', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none'
+    });
     res.send({ success: true, message: "Logged out successfully." });
 });
 
